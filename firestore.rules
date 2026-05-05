@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        // Bootstrap: Allow the owner email to be an admin even if not in the collection
+        request.auth.token.email == 'bahadarali3234@gmail.com' && request.auth.token.email_verified == true
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Project Validation
+    function isValidProject(data) {
+      return data.title is string && data.title.size() <= 100 &&
+             data.description is string && data.description.size() <= 500 &&
+             data.category in ['Entertainment & Games', 'Utility & Web Tools', 'Lab & Experiments'] &&
+             data.link is string && data.link.size() <= 500 &&
+             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 1000)) &&
+             data.size in ['small', 'medium', 'large'] &&
+             data.techStack is list && data.techStack.size() <= 10;
+    }
+
+    // 1. Projects Collection
+    match /projects/{projectId} {
+      // Anyone can read and list
+      allow get, list: if true;
+
+      // Anyone can create (restricted by validation)
+      allow create: if isValidId(projectId) && 
+                      isValidProject(incoming()) &&
+                      incoming().createdAt == request.time;
+
+      // Anyone can update (restricted by validation)
+      allow update: if isValidProject(incoming()) &&
+                      incoming().updatedAt == request.time &&
+                      incoming().createdAt == existing().createdAt;
+
+      // Anyone can delete
+      allow delete: if true;
+    }
+
+    // 2. Admins Collection (ReadOnly for system, Setup via Console/Initial script)
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if false; // Only manageable via Firebase Console for maximum security
+    }
+  }
+}
